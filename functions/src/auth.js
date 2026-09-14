@@ -64,7 +64,7 @@ const syncUserClaims = onDocumentWritten('users/{uid}', async (event) => {
 // given. Mirrors the "Municipal Accountant sets a Temporary Password under
 // Settings > System Access" flow from the original spec.
 // ---------------------------------------------------------------------
-const createUser = onCall(async (request) => {
+const createUser = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_SETTINGS_ONLY);
   const { fullName, email, username, role, fundAccess, tempPassword } = request.data || {};
   if (!fullName || !email || !role) {
@@ -103,7 +103,7 @@ const createUser = onCall(async (request) => {
 // ---------------------------------------------------------------------
 // updateUser — edit an existing profile (name/role/fundAccess/status).
 // ---------------------------------------------------------------------
-const updateUser = onCall(async (request) => {
+const updateUser = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_SETTINGS_ONLY);
   const { uid, fullName, role, fundAccess, status } = request.data || {};
   if (!uid) throw new HttpsError('invalid-argument', 'uid is required.');
@@ -129,7 +129,7 @@ const updateUser = onCall(async (request) => {
 // setTemporaryPassword — Municipal Accountant resets someone's password
 // and forces them to choose a new one on next login.
 // ---------------------------------------------------------------------
-const setTemporaryPassword = onCall(async (request) => {
+const setTemporaryPassword = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_SETTINGS_ONLY);
   const { uid, tempPassword } = request.data || {};
   if (!uid || !tempPassword || String(tempPassword).length < 6) {
@@ -148,7 +148,7 @@ const setTemporaryPassword = onCall(async (request) => {
 // flag and writes the audit entry; this callable does NOT itself touch the
 // password so a stolen ID token can't be used to reset it.
 // ---------------------------------------------------------------------
-const completePasswordChange = onCall(async (request) => {
+const completePasswordChange = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireAuth(request);
   await db.collection('users').doc(auth.uid).set({
     mustChangePassword: false,
@@ -163,7 +163,7 @@ const completePasswordChange = onCall(async (request) => {
 // again (with the still-valid token) right before signing out, purely so
 // Log In / Log Out show up in the Audit Log the same as before.
 // ---------------------------------------------------------------------
-const logLoginEvent = onCall(async (request) => {
+const logLoginEvent = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireAuth(request);
   const action = request.data && request.data.action === 'Log Out' ? 'Log Out' : 'Log In';
   await logAudit(auth, action, 'System Access', auth.email, '');
