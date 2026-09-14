@@ -1,11 +1,25 @@
 /**
  * Bank Reconciliation — matches the app's own book records (Checks, ADA,
- * and Collections and Deposit transactions) against an uploaded bank
- * statement (.xlsx/.xls/.csv) for a chosen fund and period, and produces a
- * categorized Bank Reconciliation Statement plus an exportable .xlsx —
- * modeled after the standalone "BRS Workbench" tool
- * (github.com/npp-prog/brs-workbench), adapted here to read the book side
- * straight from this app's own Firestore data instead of a second upload.
+ * and Collections and Deposit transactions) plus manually-entered prior-
+ * period carryover items against an uploaded bank statement (.xlsx/.xls/
+ * .csv) for a chosen fund and period, and produces a categorized Bank
+ * Reconciliation Statement plus an exportable 3-sheet .xlsx — modeled after
+ * the standalone "BRS Workbench" tool (github.com/npp-prog/brs-workbench,
+ * live at npp-prog.github.io/brs-workbench), adapted here to read the book
+ * side straight from this app's own Firestore data instead of a second
+ * upload, and to carry forward last period's still-outstanding items by
+ * hand instead of re-parsing last month's exported workbook.
+ *
+ * Mirrors the reference tool's workflow in five stages on one page:
+ *   1. Fund, period & balances
+ *   2. Prior period outstanding items (optional manual carryover)
+ *   3. Bank statement upload
+ *   4. Automatic reconciliation (tiered ref/amount matching, same engine
+ *      as before) with a manual "Reconciling Items" workspace for anything
+ *      the automatic pass couldn't pair up
+ *   5. Export — a 3-sheet workbook: BR_Statement (balance proof), S_Schedule
+ *      (reconciling items by category), Reconciled_Balances (every matched
+ *      pair, for audit trail)
  *
  * Runs entirely client-side (SheetJS, loaded via CDN in index.html, does
  * the spreadsheet parsing/export) — no Cloud Function involved, so there's
@@ -109,7 +123,7 @@ function parseBankRows(rows) {
       date: String(rawDate || '').trim(),
       description, ref: normalizeRef(ref), refDisplay: ref,
       debit: Math.abs(debit), credit: Math.abs(credit),
-      matched: false
+      matched: false, manual: false
     });
   }
   return out;
@@ -159,19 +173,59 @@ async function fetchBookEntries(fundKey, start, end) {
   checks.filter((r) => r.status !== 'Cancelled').forEach((r) => entries.push({
     id: r.id, date: r.date, ref: normalizeRef(r.primaryRefNo), refDisplay: r.primaryRefNo,
     amount: Number(r.netAmount) || 0, direction: 'debit', name: r.name, particulars: r.particulars,
-    source: 'Check', matched: false
+    source: 'Check', matched: false, manual: false, carryover: false
   }));
   adas.filter((r) => r.status !== 'Cancelled').forEach((r) => entries.push({
     id: r.id, date: r.date, ref: normalizeRef(r.secondaryRefNo || r.primaryRefNo), refDisplay: r.primaryRefNo,
     amount: Number(r.netAmount) || 0, direction: 'debit', name: r.name, particulars: r.particulars,
-    source: 'ADA', matched: false
+    source: 'ADA', matched: false, manual: false, carryover: false
   }));
   deposits.filter((r) => r.status !== 'Cancelled').forEach((r) => entries.push({
     id: r.id, date: r.date, ref: normalizeRef(r.primaryRefNo), refDisplay: r.primaryRefNo,
     amount: Number(r.netAmount) || 0, direction: 'credit', name: r.name, particulars: r.particulars,
-    source: 'Collections and Deposit', matched: false
+    source: 'Collections and Deposit', matched: false, manual: false, carryover: false
   }));
   return entries;
+}
+
+// ----------------------------------------------------- carryover (Step 2)
+
+function readCarryoverRows() {
+  const rows = [];
+  document.querySelectorAll('#brCarryBody tr').forEach((tr) => {
+    const date = tr.querySelector('.cf-date').value;
+    const direction = tr.querySelector('.cf-type').value;
+    const refInput = tr.querySelector('.cf-ref').value;
+    const name = tr.querySelector('.cf-name').value;
+    const amount = toNumber(tr.querySelector('.cf-amount').value);
+    if (!amount) return; // skip empty/incomplete rows silently
+    rows.push({
+      id: null, date: date || '', ref: normalizeRef(refInput), refDisplay: refInput,
+      amount, direction, name, particulars: name,
+      source: direction === 'debit' ? 'Carryover — Outstanding Check/ADA' : 'Carryover — Deposit in Transit',
+      matched: false, manual: false, carryover: true
+    });
+  });
+  return rows;
+}
+
+function addCarryoverRow(tbody) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="date" class="cf-date"></td>
+    <td>
+      <select class="cf-type">
+        <option value="debit">Outstanding Check/ADA</option>
+        <option value="credit">Deposit in Transit</option>
+      </select>
+    </td>
+    <td><input class="cf-ref" placeholder="Ref No."></td>
+    <td><input class="cf-name" placeholder="Payee / description"></td>
+    <td><input type="number" step="0.01" class="cf-amount" placeholder="0.00"></td>
+    <td><button type="button" class="btn-ghost cf-remove" title="Remove row">✕</button></td>
+  `;
+  tr.querySelector('.cf-remove').addEventListener('click', () => tr.remove());
+  tbody.appendChild(tr);
 }
 
 // ------------------------------------------------------------- matching
@@ -200,6 +254,7 @@ function subsetSum(items, targetCents, maxItems) {
 
 function runReconciliation(bookEntries, bankRows) {
   const discrepancies = [];
+  const matches = [];
 
   for (const dir of ['debit', 'credit']) {
     const bookItems = bookEntries.filter((b) => b.direction === dir);
@@ -214,6 +269,10 @@ function runReconciliation(bookEntries, bankRows) {
         book.matched = true; bank.matched = true;
         if (!centsEqual(book.amount, bankAmt(bank))) {
           discrepancies.push({ direction: dir, book, bank, diff: bankAmt(bank) - book.amount });
+        } else {
+          matches.push({ tier: 'Exact reference match', direction: dir,
+            bookDate: book.date, bookRef: book.refDisplay, bookName: book.name, bookTotal: book.amount,
+            bankDate: bank.date, bankRef: bank.refDisplay, bankDescription: bank.description, bankTotal: bankAmt(bank) });
         }
       }
     }
@@ -227,7 +286,13 @@ function runReconciliation(bookEntries, bankRows) {
       if (group.length < 2) continue;
       const total = group.reduce((s, b) => s + b.amount, 0);
       const bank = bankItems.find((bk) => !bk.matched && centsEqual(bankAmt(bk), total));
-      if (bank) { group.forEach((b) => { b.matched = true; }); bank.matched = true; }
+      if (bank) {
+        group.forEach((b) => { b.matched = true; });
+        bank.matched = true;
+        matches.push({ tier: 'Grouped by reference', direction: dir,
+          bookDate: group.map((g) => g.date).join('; '), bookRef: ref, bookName: group.map((g) => g.name).join('; '),
+          bookTotal: total, bankDate: bank.date, bankRef: bank.refDisplay, bankDescription: bank.description, bankTotal: bankAmt(bank) });
+      }
     }
 
     // Tier 3a: single book item ↔ subset of unmatched bank rows (split postings),
@@ -240,7 +305,15 @@ function runReconciliation(bookEntries, bankRows) {
         .sort((a, b) => daysBetween(a.bk.date, book.date) - daysBetween(b.bk.date, book.date))
         .map((x) => ({ idx: x.idx, cents: Math.round(bankAmt(x.bk) * 100) }));
       const hit = subsetSum(candidates, Math.round(book.amount * 100), 20);
-      if (hit) { book.matched = true; hit.forEach((i) => { bankItems[i].matched = true; }); }
+      if (hit) {
+        book.matched = true;
+        const hitRows = hit.map((i) => bankItems[i]);
+        hitRows.forEach((r) => { r.matched = true; });
+        matches.push({ tier: 'Split postings (1 book ↔ many bank rows)', direction: dir,
+          bookDate: book.date, bookRef: book.refDisplay, bookName: book.name, bookTotal: book.amount,
+          bankDate: hitRows.map((r) => r.date).join('; '), bankRef: hitRows.map((r) => r.refDisplay).join('; '),
+          bankDescription: hitRows.map((r) => r.description).join('; '), bankTotal: book.amount });
+      }
     }
 
     // Tier 3b: single bank row ↔ subset of unmatched book items (batched issuances).
@@ -252,37 +325,55 @@ function runReconciliation(bookEntries, bankRows) {
         .sort((a, b) => daysBetween(a.b.date, bank.date) - daysBetween(b.b.date, bank.date))
         .map((x) => ({ idx: x.idx, cents: Math.round(x.b.amount * 100) }));
       const hit = subsetSum(candidates, Math.round(bankAmt(bank) * 100), 20);
-      if (hit) { bank.matched = true; hit.forEach((i) => { bookItems[i].matched = true; }); }
+      if (hit) {
+        bank.matched = true;
+        const hitRows = hit.map((i) => bookItems[i]);
+        hitRows.forEach((r) => { r.matched = true; });
+        matches.push({ tier: 'Batched issuances (many book ↔ 1 bank row)', direction: dir,
+          bookDate: hitRows.map((r) => r.date).join('; '), bookRef: hitRows.map((r) => r.refDisplay).join('; '),
+          bookName: hitRows.map((r) => r.name).join('; '), bookTotal: bankAmt(bank),
+          bankDate: bank.date, bankRef: bank.refDisplay, bankDescription: bank.description, bankTotal: bankAmt(bank) });
+      }
     }
   }
 
-  const outstandingChecks = bookEntries.filter((b) => b.direction === 'debit' && !b.matched);
-  const depositsInTransit = bookEntries.filter((b) => b.direction === 'credit' && !b.matched);
-  const bankDebitMemos = bankRows.filter((b) => b.debit > 0 && !b.matched);
-  const bankCreditMemos = bankRows.filter((b) => b.credit > 0 && !b.matched);
+  return { discrepancies, matches };
+}
 
-  return { outstandingChecks, depositsInTransit, bankDebitMemos, bankCreditMemos, discrepancies };
+function deriveCategories(bookEntries, bankRows) {
+  return {
+    outstandingChecks: bookEntries.filter((b) => b.direction === 'debit' && !b.matched),
+    depositsInTransit: bookEntries.filter((b) => b.direction === 'credit' && !b.matched),
+    bankDebitMemos: bankRows.filter((b) => b.debit > 0 && !b.matched),
+    bankCreditMemos: bankRows.filter((b) => b.credit > 0 && !b.matched)
+  };
 }
 
 // -------------------------------------------------------------- rendering
 
 function sumOf(list, key) { return list.reduce((s, r) => s + (Number(r[key]) || Number(r.amount) || 0), 0); }
 
-function catTableHtml(title, rows, columns, emptyLabel) {
+function catTableHtml(title, rows, columns, emptyLabel, checkClass) {
   const total = rows.reduce((s, r) => s + (columns.sumKey ? Number(r[columns.sumKey]) || 0 : 0), 0);
   let body;
   if (!rows.length) {
     body = `<div class="empty-state">${emptyLabel}</div>`;
   } else {
-    body = `<div class="table-scroll"><table class="data"><thead><tr>${columns.heads.map((h) => `<th${h.num ? ' class="num"' : ''}>${h.label}</th>`).join('')}</tr></thead><tbody>` +
-      rows.map((r) => `<tr>${columns.heads.map((h) => `<td${h.num ? ' class="num"' : ''}>${h.render(r)}</td>`).join('')}</tr>`).join('') +
+    const checkHead = checkClass ? '<th></th>' : '';
+    const checkCell = (r, i) => checkClass ? `<td><input type="checkbox" class="${checkClass}" data-gidx="${r._gidx}"></td>` : '';
+    body = `<div class="table-scroll"><table class="data"><thead><tr>${checkHead}${columns.heads.map((h) => `<th${h.num ? ' class="num"' : ''}>${h.label}</th>`).join('')}</tr></thead><tbody>` +
+      rows.map((r, i) => `<tr>${checkCell(r, i)}${columns.heads.map((h) => `<td${h.num ? ' class="num"' : ''}>${h.render(r)}</td>`).join('')}</tr>`).join('') +
       `</tbody></table></div>`;
   }
   return `<div class="br-cat"><h4><span>${title}</span>${(columns.sumKey && rows.length) ? `<span class="amt">${fmtMoney(total)}</span>` : ''}</h4>${body}</div>`;
 }
 
-function renderResults(container, result, meta) {
-  const { outstandingChecks, depositsInTransit, bankDebitMemos, bankCreditMemos, discrepancies } = result;
+function renderResults(container, state) {
+  const { bookEntries, bankRows, matches, discrepancies, meta } = state;
+  bookEntries.forEach((r, i) => { r._gidx = i; });
+  bankRows.forEach((r, i) => { r._gidx = i; });
+
+  const { outstandingChecks, depositsInTransit, bankDebitMemos, bankCreditMemos } = deriveCategories(bookEntries, bankRows);
 
   const outstandingTotal = sumOf(outstandingChecks, 'amount');
   const depositsTotal = sumOf(depositsInTransit, 'amount');
@@ -297,6 +388,10 @@ function renderResults(container, result, meta) {
   const adjustedBank = meta.bankBalance + depositsTotal - outstandingTotal;
   const adjustedBook = meta.bookBalance + creditMemoTotal - debitMemoTotal + bookAdj;
   const variance = Math.round((adjustedBank - adjustedBook) * 100) / 100;
+
+  state.derived = { outstandingChecks, depositsInTransit, bankDebitMemos, bankCreditMemos, outstandingTotal, depositsTotal, debitMemoTotal, creditMemoTotal, adjustedBank, adjustedBook, variance };
+
+  const nameCol = (r) => escapeHtml(r.name) + (r.carryover ? ' <span class="tag-cf">C/F</span>' : '');
 
   const html = `
     <div class="br-card">
@@ -318,30 +413,30 @@ function renderResults(container, result, meta) {
         { heads: [
             { label: 'Date', render: (r) => escapeHtml(r.date) },
             { label: 'Ref No.', render: (r) => escapeHtml(r.refDisplay) },
-            { label: 'Payee', render: (r) => escapeHtml(r.name) },
+            { label: 'Payee', render: nameCol },
             { label: 'Amount', num: true, render: (r) => fmtMoney(r.amount) }
-          ], sumKey: 'amount' }, 'None — every check/ADA issued has cleared the bank.')}
+          ], sumKey: 'amount' }, 'None — every check/ADA issued has cleared the bank.', 'br-chk-book')}
       ${catTableHtml('Deposits / Collections — Not Yet Reflected in the Bank Statement', depositsInTransit,
         { heads: [
             { label: 'Date', render: (r) => escapeHtml(r.date) },
             { label: 'Ref No.', render: (r) => escapeHtml(r.refDisplay) },
-            { label: 'Collector', render: (r) => escapeHtml(r.name) },
+            { label: 'Collector', render: nameCol },
             { label: 'Amount', num: true, render: (r) => fmtMoney(r.amount) }
-          ], sumKey: 'amount' }, 'None — every deposit has been credited by the bank.')}
+          ], sumKey: 'amount' }, 'None — every deposit has been credited by the bank.', 'br-dep-book')}
       ${catTableHtml('Bank Debit Memos — Not Yet Taken Up in the Books', bankDebitMemos,
         { heads: [
             { label: 'Date', render: (r) => escapeHtml(r.date) },
             { label: 'Description', render: (r) => escapeHtml(r.description) },
             { label: 'Ref', render: (r) => escapeHtml(r.refDisplay) },
             { label: 'Amount', num: true, render: (r) => fmtMoney(r.debit) }
-          ], sumKey: 'debit' }, 'None.')}
+          ], sumKey: 'debit' }, 'None.', 'br-chk-bank')}
       ${catTableHtml('Bank Credit Memos — Not Yet Taken Up in the Books', bankCreditMemos,
         { heads: [
             { label: 'Date', render: (r) => escapeHtml(r.date) },
             { label: 'Description', render: (r) => escapeHtml(r.description) },
             { label: 'Ref', render: (r) => escapeHtml(r.refDisplay) },
             { label: 'Amount', num: true, render: (r) => fmtMoney(r.credit) }
-          ], sumKey: 'credit' }, 'None.')}
+          ], sumKey: 'credit' }, 'None.', 'br-dep-bank')}
       ${catTableHtml('Reconciling Differences — Same Reference, Different Amount', discrepancies,
         { heads: [
             { label: 'Ref No.', render: (r) => escapeHtml(r.book.refDisplay) },
@@ -350,6 +445,21 @@ function renderResults(container, result, meta) {
             { label: 'Difference', num: true, render: (r) => fmtMoney(r.diff) }
           ], sumKey: null }, 'None.')}
     </div>
+
+    <div class="br-card">
+      <h3>Manual Matching <span class="hint">(for anything the automatic pass above couldn't pair up — tick one or more on each side, then match them)</span></h3>
+      <div class="br-manual-grid">
+        <div>
+          <div class="br-manual-label">Checks / ADA not yet cleared ↔ Bank debit memos</div>
+          <button type="button" class="btn-ghost" id="brMatchDebitBtn">Match checked items</button>
+        </div>
+        <div>
+          <div class="br-manual-label">Deposits not yet reflected ↔ Bank credit memos</div>
+          <button type="button" class="btn-ghost" id="brMatchCreditBtn">Match checked items</button>
+        </div>
+      </div>
+    </div>
+
     <div class="inline-actions">
       <button class="btn-primary" id="brExportBtn">Export Bank Reconciliation Statement (.xlsx)</button>
     </div>
@@ -357,40 +467,95 @@ function renderResults(container, result, meta) {
   container.innerHTML = html;
 
   document.getElementById('brExportBtn').addEventListener('click', () => {
-    exportWorkbook(result, { ...meta, adjustedBank, adjustedBook, variance, outstandingTotal, depositsTotal, debitMemoTotal, creditMemoTotal });
+    exportWorkbook(state);
+  });
+
+  document.getElementById('brMatchDebitBtn').addEventListener('click', () => {
+    manualMatch(state, 'debit', 'br-chk-book', 'br-chk-bank', container);
+  });
+  document.getElementById('brMatchCreditBtn').addEventListener('click', () => {
+    manualMatch(state, 'credit', 'br-dep-book', 'br-dep-bank', container);
   });
 }
 
-function exportWorkbook(result, meta) {
+function manualMatch(state, direction, bookClass, bankClass, container) {
+  const bookIdx = Array.from(container.querySelectorAll('.' + bookClass + ':checked')).map((el) => Number(el.dataset.gidx));
+  const bankIdx = Array.from(container.querySelectorAll('.' + bankClass + ':checked')).map((el) => Number(el.dataset.gidx));
+  if (!bookIdx.length && !bankIdx.length) { toast('Tick at least one item on either side first.', true); return; }
+
+  const bookRows = bookIdx.map((i) => state.bookEntries[i]);
+  const bankRows = bankIdx.map((i) => state.bankRows[i]);
+  const bookTotal = bookRows.reduce((s, r) => s + r.amount, 0);
+  const bankTotal = bankRows.reduce((s, r) => s + (direction === 'debit' ? r.debit : r.credit), 0);
+
+  bookRows.forEach((r) => { r.matched = true; r.manual = true; });
+  bankRows.forEach((r) => { r.matched = true; r.manual = true; });
+
+  const pseudoBook = {
+    refDisplay: bookRows.map((r) => r.refDisplay).join('; ') || '—',
+    date: bookRows.map((r) => r.date).join('; ') || '—',
+    name: bookRows.map((r) => r.name).join('; '),
+    amount: bookTotal
+  };
+  const pseudoBank = {
+    refDisplay: bankRows.map((r) => r.refDisplay).join('; ') || '—',
+    date: bankRows.map((r) => r.date).join('; ') || '—',
+    description: bankRows.map((r) => r.description).join('; '),
+    debit: direction === 'debit' ? bankTotal : 0,
+    credit: direction === 'credit' ? bankTotal : 0
+  };
+
+  if (centsEqual(bookTotal, bankTotal)) {
+    state.matches.push({ tier: 'Manual match', direction,
+      bookDate: pseudoBook.date, bookRef: pseudoBook.refDisplay, bookName: pseudoBook.name, bookTotal,
+      bankDate: pseudoBank.date, bankRef: pseudoBank.refDisplay, bankDescription: pseudoBank.description, bankTotal });
+    toast('Matched — balances agree.');
+  } else {
+    state.discrepancies.push({ direction, book: pseudoBook, bank: pseudoBank, diff: bankTotal - bookTotal, manual: true });
+    toast('Matched with a difference — added to Reconciling Differences.', true);
+  }
+
+  renderResults(document.getElementById('brResults'), state);
+}
+
+function exportWorkbook(state) {
+  const { meta, derived, matches, discrepancies } = state;
   const wb = XLSX.utils.book_new();
 
-  const summary = [
-    ['MUNICIPAL GOVERNMENT OF CANDONI'],
+  // Sheet 1 — BR_Statement: the balance-proof summary.
+  const statement = [
+    ['MUNICIPAL GOVERNMENT OF CANDONI — MGO CANDONI ACCOUNTING SYSTEM'],
     ['Bank Reconciliation Statement'],
-    [meta.fundLabel + ' — ' + meta.periodLabel],
+    [meta.fundLabel + ' — ' + meta.periodLabel + (meta.bankLabel ? ' — ' + meta.bankLabel : '')],
     [],
     ['Unadjusted Book Balance', meta.bookBalance],
-    ['Add: Bank Credit Memos not yet taken up', meta.creditMemoTotal],
-    ['Less: Bank Debit Memos not yet taken up', -meta.debitMemoTotal],
-    ['Adjusted Book Balance', meta.adjustedBook],
+    ['Add: Bank Credit Memos not yet taken up', derived.creditMemoTotal],
+    ['Less: Bank Debit Memos not yet taken up', -derived.debitMemoTotal],
+    ['Adjusted Book Balance', derived.adjustedBook],
     [],
     ['Unadjusted Bank Balance', meta.bankBalance],
-    ['Add: Deposits/Collections not yet reflected', meta.depositsTotal],
-    ['Less: Checks/ADA not yet cleared', -meta.outstandingTotal],
-    ['Adjusted Bank Balance', meta.adjustedBank],
+    ['Add: Deposits/Collections not yet reflected', derived.depositsTotal],
+    ['Less: Checks/ADA not yet cleared', -derived.outstandingTotal],
+    ['Adjusted Bank Balance', derived.adjustedBank],
     [],
-    ['Variance (should be zero)', meta.variance]
+    ['Variance (should be zero)', derived.variance]
   ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Reconciliation');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(statement), 'BR_Statement');
 
-  const items = [['Category', 'Date', 'Reference', 'Name/Description', 'Amount']];
-  result.outstandingChecks.forEach((r) => items.push(['Checks/ADA Not Yet Cleared', r.date, r.refDisplay, r.name, r.amount]));
-  result.depositsInTransit.forEach((r) => items.push(['Deposits Not Yet Reflected', r.date, r.refDisplay, r.name, r.amount]));
-  result.bankDebitMemos.forEach((r) => items.push(['Bank Debit Memo', r.date, r.refDisplay, r.description, r.debit]));
-  result.bankCreditMemos.forEach((r) => items.push(['Bank Credit Memo', r.date, r.refDisplay, r.description, r.credit]));
-  result.discrepancies.forEach((r) => items.push(['Reconciling Difference', r.book.date, r.book.refDisplay,
+  // Sheet 2 — S_Schedule: reconciling items by category, same as on screen.
+  const schedule = [['Category', 'Date', 'Reference', 'Name / Description', 'Amount']];
+  derived.outstandingChecks.forEach((r) => schedule.push([r.carryover ? 'Checks/ADA Not Yet Cleared (C/F)' : 'Checks/ADA Not Yet Cleared', r.date, r.refDisplay, r.name, r.amount]));
+  derived.depositsInTransit.forEach((r) => schedule.push([r.carryover ? 'Deposits Not Yet Reflected (C/F)' : 'Deposits Not Yet Reflected', r.date, r.refDisplay, r.name, r.amount]));
+  derived.bankDebitMemos.forEach((r) => schedule.push(['Bank Debit Memo', r.date, r.refDisplay, r.description, r.debit]));
+  derived.bankCreditMemos.forEach((r) => schedule.push(['Bank Credit Memo', r.date, r.refDisplay, r.description, r.credit]));
+  discrepancies.forEach((r) => schedule.push(['Reconciling Difference', r.book.date, r.book.refDisplay,
     `Books ${r.book.amount} vs Bank ${r.direction === 'debit' ? r.bank.debit : r.bank.credit}`, r.diff]));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(items), 'Reconciling Items');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(schedule), 'S_Schedule');
+
+  // Sheet 3 — Reconciled_Balances: every matched pair, as an audit trail proof.
+  const proof = [['Match Type', 'Book Date', 'Book Ref', 'Book Payee/Desc.', 'Book Amount', 'Bank Date', 'Bank Ref', 'Bank Description', 'Bank Amount']];
+  matches.forEach((m) => proof.push([m.tier, m.bookDate, m.bookRef, m.bookName, m.bookTotal, m.bankDate, m.bankRef, m.bankDescription, m.bankTotal]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(proof), 'Reconciled_Balances');
 
   const fname = `BRS_${meta.fundKey}_${meta.period}.xlsx`;
   XLSX.writeFile(wb, fname);
@@ -437,7 +602,18 @@ function renderForm() {
     </div>
 
     <div class="br-card">
-      <h3>2. Bank Statement (.xlsx, .xls or .csv)</h3>
+      <h3>2. Prior Period Outstanding Items <span class="hint">(optional — checks or deposits from an earlier month still not cleared by the bank; carried forward from your last reconciliation)</span></h3>
+      <div class="table-scroll">
+        <table class="data" id="brCarryTable">
+          <thead><tr><th>Date</th><th>Type</th><th>Ref No.</th><th>Payee / Description</th><th class="num">Amount</th><th></th></tr></thead>
+          <tbody id="brCarryBody"></tbody>
+        </table>
+      </div>
+      <button type="button" class="btn-ghost" id="brCarryAddBtn" style="margin-top:8px;">+ Add Row</button>
+    </div>
+
+    <div class="br-card">
+      <h3>3. Bank Statement (.xlsx, .xls or .csv)</h3>
       <div class="br-dropzone" id="brDropzone">
         <div>Click to choose a file, or drag one here.</div>
         <div class="field-hint">Expected columns: Date, Description, Reference/Cheque No., Debit, Credit (or a single signed Amount column).</div>
@@ -447,10 +623,14 @@ function renderForm() {
     </div>
 
     <div class="inline-actions" style="margin-bottom:18px;">
-      <button class="btn-primary" id="brRunBtn">Run Reconciliation</button>
+      <button class="btn-primary" id="brRunBtn">4. Run Reconciliation</button>
     </div>
     <div id="brResults"></div>
   `;
+
+  const carryBody = document.getElementById('brCarryBody');
+  document.getElementById('brCarryAddBtn').addEventListener('click', () => addCarryoverRow(carryBody));
+  addCarryoverRow(carryBody); // start with one blank row so the section isn't empty
 
   const dropzone = document.getElementById('brDropzone');
   const fileInput = document.getElementById('brFileInput');
@@ -486,16 +666,23 @@ function renderForm() {
     results.innerHTML = '<div class="empty-state">Reconciling…</div>';
     try {
       const { start, end } = monthRange(month);
-      const [bookEntries, bankRows] = await Promise.all([
+      const [fetchedEntries, bankRows] = await Promise.all([
         fetchBookEntries(fundKey, start, end),
         Promise.resolve(parseBankRows(uploadedRows))
       ]);
-      const result = runReconciliation(bookEntries, bankRows);
-      renderResults(results, result, {
-        fundKey, fundLabel: FUND_NAMES[fundKey], period: month,
-        periodLabel: new Date(month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-        bankLabel, bookBalance, bankBalance
-      });
+      const carryoverRows = readCarryoverRows();
+      const bookEntries = fetchedEntries.concat(carryoverRows);
+      const { discrepancies, matches } = runReconciliation(bookEntries, bankRows);
+
+      const state = {
+        bookEntries, bankRows, discrepancies, matches,
+        meta: {
+          fundKey, fundLabel: FUND_NAMES[fundKey], period: month,
+          periodLabel: new Date(month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+          bankLabel, bookBalance, bankBalance
+        }
+      };
+      renderResults(results, state);
     } catch (e) {
       results.innerHTML = `<div class="empty-state">${errorMessage(e)}</div>`;
       toast(errorMessage(e), true);
