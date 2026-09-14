@@ -50,7 +50,7 @@ async function logBudgetReference(entry) {
 //   allotmentOrderNo, augmentationOrderNo }
 // Only the fields actually present on payload are changed; everything else
 // on the existing line is left untouched.
-const saveBudgetLine = onCall(async (request) => {
+const saveBudgetLine = onCall({ invoker: 'public' }, async (request) => {
   const p = request.data || {};
   const isEncodeOnly = !p.editingExistingAmount; // Budget Staff may only add brand-new lines/appropriation
   const auth = requireRole(request, isEncodeOnly ? ROLE_CAN_ENCODE_BUDGET : ROLE_CAN_EDIT_BUDGET);
@@ -204,12 +204,12 @@ async function saveObligationRequestCore(auth, p) {
   return { ok: true, obrNo };
 }
 
-const saveObligationRequest = onCall(async (request) => {
+const saveObligationRequest = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_CAN_ENCODE_BUDGET);
   return saveObligationRequestCore(auth, request.data || {});
 });
 
-const saveObligationRequestBatch = onCall(async (request) => {
+const saveObligationRequestBatch = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_CAN_ENCODE_BUDGET);
   const rows = (request.data && request.data.rows) || [];
   if (!Array.isArray(rows) || !rows.length) throw new HttpsError('invalid-argument', 'No Obligation Request rows to save.');
