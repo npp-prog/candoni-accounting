@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Cloud Storage rules for Firebase — governs file uploads/downloads made
+// directly from the browser (Disbursement Voucher PDF attachments). Kept
+// deliberately simple: any signed-in user may read (the app itself already
+// gates who can see a given transaction's row/link via Firestore rules and
+// fund access) and only signed-in users may upload, capped to PDFs under
+// 15 MB so this can't be used as an open file-drop.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /dv-attachments/{fundKey}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+    }
+    // Deny everything else by default.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
