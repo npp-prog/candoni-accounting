@@ -1,4 +1,7 @@
-import { db, fn, collection, query, where, orderBy, getDocs } from '../firebase-init.js';
+import {
+  db, fn, collection, query, where, orderBy, getDocs,
+  storage, storageRef, uploadBytes, getDownloadURL
+} from '../firebase-init.js';
 import { currentFund, onFundChange, hasRole } from '../state.js';
 import {
   TX_TYPES, TX_TYPE_LABEL, FUND_LIST, FUND_NAMES, DV_CATEGORIES, DV_SUB_TYPES,
@@ -63,6 +66,11 @@ async function renderList() {
       { label: 'Status', render: (r) => statusPill(r.status) },
       { label: 'JEV', render: (r) => r.jevNo ? escapeHtml(r.jevNo) : '<span class="muted">—</span>' },
       {
+        label: 'File', render: (r) => r.attachmentUrl
+          ? `<a href="${escapeHtml(r.attachmentUrl)}" target="_blank" rel="noopener">View PDF</a>`
+          : '<span class="muted">—</span>'
+      },
+      {
         label: '', render: (r) => {
           const btns = [];
           if (canEdit && r.status === 'Pending') {
@@ -106,16 +114,19 @@ function typeSpecificFieldsHtml(typeKey) {
     html += `<div class="form-field"><label>DV Type</label><select id="txSubType">${DV_SUB_TYPES.map((s) => `<option>${s}</option>`).join('')}</select></div>`;
     html += `<div class="form-field"><label>DV Category</label><select id="txDvCategory"><option value="">—</option>${DV_CATEGORIES.map((s) => `<option>${s}</option>`).join('')}</select></div>`;
   }
-  if (['check', 'ada', 'liquidation', 'payroll'].includes(typeKey)) {
+  if (['check', 'ada', 'liquidation'].includes(typeKey)) {
     html += `<div class="form-field"><label>Secondary Ref No. (DV No.)</label><input id="txSecondaryRef"></div>`;
   }
   if (typeKey === 'collections_deposit') {
     html += `<div class="form-field"><label>Collector</label><input id="txCollector"></div>`;
   }
-  if (['check', 'rsmi'].includes(typeKey)) {
+  if (typeKey === 'check') {
     html += `<div class="form-field"><label>Primary Ref No. (manual)</label><input id="txPrimaryRefManual" required></div>`;
   } else {
     html += `<div class="form-field"><label>Primary Ref No.</label><input id="txPrimaryRefManual" placeholder="Auto-generated if left blank"></div>`;
+  }
+  if (typeKey === 'disbursement_voucher') {
+    html += `<div class="form-field span2"><label>Attach Disbursement Voucher (PDF, optional)</label><input type="file" id="txDvFile" accept="application/pdf"></div>`;
   }
   return html;
 }
@@ -154,6 +165,38 @@ function openNewTransactionModal() {
     e.preventDefault();
     const btn = document.getElementById('txSaveBtn');
     setButtonBusy(btn, true, 'Saving…');
+
+    let attachmentUrl = '';
+    let attachmentName = '';
+    const fileInput = document.getElementById('txDvFile');
+    if (fileInput && fileInput.files && fileInput.files[0]) {
+      const file = fileInput.files[0];
+      if (file.type !== 'application/pdf') {
+        toast('Attachment must be a PDF file.', true);
+        setButtonBusy(btn, false);
+        return;
+      }
+      if (file.size > 15 * 1024 * 1024) {
+        toast('Attachment must be under 15 MB.', true);
+        setButtonBusy(btn, false);
+        return;
+      }
+      try {
+        setButtonBusy(btn, true, 'Uploading PDF…');
+        const fundKey = document.getElementById('txFund').value;
+        const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, '_');
+        const path = `dv-attachments/${fundKey}/${Date.now()}-${safeName}`;
+        const sref = storageRef(storage, path);
+        await uploadBytes(sref, file, { contentType: 'application/pdf' });
+        attachmentUrl = await getDownloadURL(sref);
+        attachmentName = file.name;
+      } catch (err) {
+        toast('PDF upload failed: ' + errorMessage(err), true);
+        setButtonBusy(btn, false);
+        return;
+      }
+    }
+
     const payload = {
       date: document.getElementById('txDate').value,
       fund: document.getElementById('txFund').value,
@@ -164,7 +207,9 @@ function openNewTransactionModal() {
       grossAmount: document.getElementById('txGross').value,
       wtax: document.getElementById('txWtax').value,
       otherDeductions: document.getElementById('txOther').value,
-      primaryRefNo: document.getElementById('txPrimaryRefManual') ? document.getElementById('txPrimaryRefManual').value : ''
+      primaryRefNo: document.getElementById('txPrimaryRefManual') ? document.getElementById('txPrimaryRefManual').value : '',
+      attachmentUrl,
+      attachmentName
     };
     if (document.getElementById('txSubType')) payload.subType = document.getElementById('txSubType').value;
     if (document.getElementById('txDvCategory')) payload.dvCategory = document.getElementById('txDvCategory').value;
