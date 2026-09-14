@@ -8,7 +8,7 @@ const { logAudit } = require('./lib/audit');
 const { periodDocId } = require('./lib/closedPeriods');
 const { FUND_NAMES, ROLE_ACCOUNTANT_ONLY } = require('./lib/constants');
 
-const closeMonth = onCall(async (request) => {
+const closeMonth = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_ACCOUNTANT_ONLY);
   const { fund, period } = request.data || {};
   const fundName = FUND_NAMES[fund] || fund;
@@ -24,7 +24,7 @@ const closeMonth = onCall(async (request) => {
   return { ok: true };
 });
 
-const reopenMonth = onCall(async (request) => {
+const reopenMonth = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_ACCOUNTANT_ONLY);
   const { fund, period } = request.data || {};
   const fundName = FUND_NAMES[fund] || fund;
