@@ -14,6 +14,9 @@ import {
 import {
   getFunctions, httpsCallable
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+import {
+  getStorage, ref as storageRef, uploadBytes, getDownloadURL
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
 import { firebaseConfig, FUNCTIONS_REGION } from "./firebase-config.js";
 
@@ -21,6 +24,7 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functionsInstance = getFunctions(app, FUNCTIONS_REGION || "us-central1");
+export const storage = getStorage(app);
 
 setPersistence(auth, browserLocalPersistence).catch(() => {});
 
@@ -29,7 +33,8 @@ export {
   EmailAuthProvider, reauthenticateWithCredential, updatePassword,
   collection, doc, getDoc, getDocs, setDoc, addDoc,
   query, where, orderBy, limit, onSnapshot, Timestamp,
-  httpsCallable
+  httpsCallable,
+  storageRef, uploadBytes, getDownloadURL
 };
 
 export function fn(name) {
