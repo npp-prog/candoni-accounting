@@ -12,7 +12,7 @@ const { requireRole } = require('./lib/roles');
 const { logAudit } = require('./lib/audit');
 const { COA_COLLECTION_BY_FUND, ROLE_SETTINGS_ONLY } = require('./lib/constants');
 
-const saveAccount = onCall(async (request) => {
+const saveAccount = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_SETTINGS_ONLY);
   const { fund, accountCode, accountName, category, status } = request.data || {};
   const collection = COA_COLLECTION_BY_FUND[fund];
@@ -32,7 +32,7 @@ const saveAccount = onCall(async (request) => {
   return { ok: true };
 });
 
-const deleteAccount = onCall(async (request) => {
+const deleteAccount = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_SETTINGS_ONLY);
   const { fund, accountCode } = request.data || {};
   const collection = COA_COLLECTION_BY_FUND[fund];
