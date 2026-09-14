@@ -51,13 +51,13 @@ async function assertDvSecondaryRefAvailable(typeKey, fundName, secondaryRefNo, 
   }
 }
 
-const getSuggestedRefNo = onCall(async (request) => {
+const getSuggestedRefNo = onCall({ invoker: 'public' }, async (request) => {
   requireRole(request, ROLE_CAN_CREATE_TX.concat(['Budget Officer', 'Budget Staff', 'Viewer']));
   const { kind, opts } = request.data || {};
   return { refNo: await peekRefNo(kind, opts || {}) };
 });
 
-const saveTransaction = onCall(async (request) => {
+const saveTransaction = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_CAN_CREATE_TX);
   const { typeKey, payload } = request.data || {};
   const type = TX_TYPE_LABEL[typeKey];
@@ -113,7 +113,7 @@ const saveTransaction = onCall(async (request) => {
   return { ok: true, docId: result.docId, refNo: result.primaryRef };
 });
 
-const updateTransaction = onCall(async (request) => {
+const updateTransaction = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_CAN_EDIT_TX);
   const { docId, payload } = request.data || {};
   if (!docId) throw new HttpsError('invalid-argument', 'docId is required.');
@@ -158,7 +158,7 @@ const updateTransaction = onCall(async (request) => {
   return { ok: true };
 });
 
-const updateTransactionStatus = onCall(async (request) => {
+const updateTransactionStatus = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_CAN_EDIT_TX);
   const { docId, status } = request.data || {};
   if (!TX_STATUSES.includes(status)) throw new HttpsError('invalid-argument', 'Unknown status: ' + status);
