@@ -24,13 +24,13 @@ const JEV_LINES = 'jevLines';
 const TRANSACTIONS = 'transactions';
 const OBLIGATION_REQUESTS = 'obligationRequests';
 
-const getNextJevNo = onCall(async (request) => {
+const getNextJevNo = onCall({ invoker: 'public' }, async (request) => {
   requireRole(request, ROLE_CAN_CREATE_TX);
   const { fund } = request.data || {};
   return { jevNo: await peekRefNo('jev', { fund }) };
 });
 
-const saveJEV = onCall(async (request) => {
+const saveJEV = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireRole(request, ROLE_CAN_CREATE_TX);
   const { header, lines } = request.data || {};
   if (!header || !header.fund || !FUND_NAMES[header.fund]) {
