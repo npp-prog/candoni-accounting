@@ -2,6 +2,7 @@ import { setFund, currentFund } from './state.js';
 
 const pageTitles = {
   dashboard: 'Dashboard', budget: 'Budget', transactions: 'Transactions',
+  bankrecon: 'Bank Reconciliation',
   report: 'Report', create: 'Create', settings: 'Settings', auditlog: 'Audit Log'
 };
 
