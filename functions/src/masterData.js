@@ -22,7 +22,7 @@ function roleFor(key) {
   return SETTINGS_ONLY_CREATE_KEYS.includes(key) ? ROLE_SETTINGS_ONLY : ROLE_CAN_EDIT_TRANSACTIONS;
 }
 
-const saveCreateRecord = onCall(async (request) => {
+const saveCreateRecord = onCall({ invoker: 'public' }, async (request) => {
   const { key, payload } = request.data || {};
   const collection = CREATE_LISTS[key];
   if (!collection) throw new HttpsError('invalid-argument', 'Unknown create list: ' + key);
@@ -40,7 +40,7 @@ const saveCreateRecord = onCall(async (request) => {
   return { ok: true };
 });
 
-const deleteCreateRecord = onCall(async (request) => {
+const deleteCreateRecord = onCall({ invoker: 'public' }, async (request) => {
   const { key, keyValue } = request.data || {};
   const collection = CREATE_LISTS[key];
   if (!collection) throw new HttpsError('invalid-argument', 'Unknown create list: ' + key);
