@@ -8,7 +8,7 @@ const { db } = require('./lib/admin');
 const { requireAuth, requireFundAccess } = require('./lib/roles');
 const { FUND_NAMES } = require('./lib/constants');
 
-const getDashboardSummary = onCall(async (request) => {
+const getDashboardSummary = onCall({ invoker: 'public' }, async (request) => {
   const auth = requireAuth(request);
   const { fund } = request.data || {};
   requireFundAccess(auth, fund);
