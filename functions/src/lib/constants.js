@@ -57,22 +57,19 @@ const TX_TYPE_LABEL = {
   ada: 'ADA',
   collections_deposit: 'Collections and Deposit',
   liquidation: 'Liquidation',
-  payroll: 'Payroll',
-  rsmi: 'RSMI',
-  depreciation: 'Depreciation',
   others: 'Others'
 };
 
 const TX_REF_PREFIX = {
   disbursement_voucher: 'DV', check: 'CHK', ada: 'ADA', collections_deposit: 'CD',
-  liquidation: 'LIQ', payroll: 'PR', rsmi: 'RSMI', depreciation: 'DEP', others: 'OTH'
+  liquidation: 'LIQ', others: 'OTH'
 };
 
 // Which of the auto-numbering schemes backs each type's Primary Ref No.
-// Types left out (check, rsmi) are manually encoded per spec.
+// Types left out (check) are manually encoded per spec.
 const TX_REF_KIND = {
   disbursement_voucher: 'dv', ada: 'ada', collections_deposit: 'rcd',
-  liquidation: 'lr', payroll: 'rcdisb', others: 'adj'
+  liquidation: 'lr', others: 'adj'
 };
 
 const DV_CATEGORIES = ['Regular', 'Cash Advance/Fund Transfer', 'Payroll'];
