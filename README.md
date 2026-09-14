@@ -25,6 +25,25 @@ Report, Create, Settings, Audit Log) is.
 See `docs/SETUP_GUIDE.md` for how to create a Firebase project, configure
 this code against it, and deploy.
 
+## Pushing this to your own GitHub repo
+
+This folder is already a git repository with one commit. To push it to a
+repo on your own GitHub account:
+
+```
+# 1. Create an empty repository on github.com (do NOT initialize it with
+#    a README/.gitignore/license — this folder already has those).
+# 2. From inside this folder:
+git remote add origin https://github.com/<your-username>/<your-repo>.git
+git branch -M main
+git push -u origin main
+```
+
+If you use SSH instead of HTTPS for GitHub, use
+`git@github.com:<your-username>/<your-repo>.git` for the remote URL
+instead. Every deploy/setup step after this point (Setup Guide) works
+the same whether the code lives only on your machine or also on GitHub.
+
 ## Project layout
 
 ```
