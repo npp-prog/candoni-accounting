@@ -68,6 +68,8 @@ firestore.indexes.json  Composite indexes the report/list queries need
 firebase.json           Firebase project configuration (hosting + functions + firestore + emulators)
 .firebaserc             Which Firebase project this deploys to — set your project ID here
 assets/                 Reference copies of the original CSS and the seal image (not shipped to Hosting)
+scripts/                One-time data migration script (see docs/SETUP_GUIDE.md section 5) — not deployed
+docs/                   Setup guide
 ```
 
 ## Roles

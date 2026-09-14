@@ -1,0 +1,15 @@
+{
+  "name": "candoni-import-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-time data migration scripts for the Candoni Accounting System (Firebase edition) — not deployed, run locally against a service account.",
+  "main": "importFromXlsx.js",
+  "scripts": {
+    "import": "node importFromXlsx.js",
+    "import:dry-run": "node importFromXlsx.js --dry-run"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.4.0",
+    "xlsx": "^0.18.5"
+  }
+}

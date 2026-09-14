@@ -61,9 +61,18 @@ live (see the comments in `report.js`/`transactions.js`).
 There is no user in Firebase Authentication yet, and `createUser` (the
 callable that makes new accounts) itself requires being logged in as a
 Municipal Accountant — a chicken-and-egg problem for the very first
-account. Bootstrap it once, directly against your project, with the
+account.
+
+**If you're going to run the full data import (step 5) anyway, skip this
+step** — `scripts/importFromXlsx.js` creates every System_Access account
+(including the Municipal Accountant one) directly via the Admin SDK,
+which has no such chicken-and-egg problem. Only do the bootstrap below if
+you want a single login to explore the app with before importing
+everything else.
+
+Bootstrap one account once, directly against your project, with the
 [Firebase Admin SDK](https://firebase.google.com/docs/admin/setup) from a
-trusted machine (this only needs to be done once):
+trusted machine:
 
 ```js
 // bootstrap.js — run once with `node bootstrap.js` after
@@ -104,32 +113,63 @@ then on since you're already a Municipal Accountant.
 
 ## 5. Bring over your existing data
 
-This build's Cloud Functions are schema-flexible (`saveAccount`,
-`saveCreateRecord`, etc. all merge whatever payload they're given), so
-importing your current Google Sheet is a matter of writing a one-time
-Node script with the Admin SDK that reads each sheet tab (via the
-`googleapis` package, or by exporting to CSV/XLSX first) and calls
-`admin.firestore().collection(...).doc(...).set(...)` for each row, using
-the same collection names this app already reads from:
+`scripts/importFromXlsx.js` reads an `.xlsx` export of the original
+Google Sheet (File > Download > Microsoft Excel (.xlsx) from Sheets) and
+writes everything straight into Firestore, using the same collection
+names this app already reads from:
 
-| Sheet (original)                | Firestore collection            |
-|----------------------------------|----------------------------------|
+| Sheet (original)                    | Firestore collection             |
+|--------------------------------------|-----------------------------------|
 | COA_GeneralFund / COA_SEF / COA_TrustFund | `coa_generalFund` / `coa_sef` / `coa_trustFund` |
-| Transactions                     | `transactions`                  |
-| Journal_Entry_Voucher             | `jev` (+ `jevLines`, one doc per line) |
-| Budget_Allotment                  | `budgetLines`                   |
-| Obligation_Request                 | `obligationRequests`            |
-| Create_Names                       | `createNames`                   |
-| Create_BankAccount                  | `createBankAccount`             |
-| Create_Office                       | `createOffice`                  |
-| Create_FPP                          | `createFpp`                     |
-| Create_SubsidiaryLedgerAccounts      | `createSubsidiaryLedgerAccounts` |
-| System_Access                       | `users` (+ a matching Firebase Auth account per row) |
+| Transactions                         | `transactions`                    |
+| Journal_Entry_Voucher                 | `jev` (+ `jevLines`, one doc per line, grouped by JEV No.) |
+| Budget_Allotment                      | `budgetLines`                     |
+| Budget_Reference_Log                   | `budgetReferenceLog`               |
+| Obligation_Request                     | `obligationRequests`               |
+| Create_Names                           | `createNames`                      |
+| Create_BankAccount                      | `createBankAccount`                |
+| Create_Office                           | `createOffice`                     |
+| Create_FPP                              | `createFpp`                        |
+| Create_SubsidiaryLedgerAccounts          | `createSubsidiaryLedgerAccounts`   |
+| Closed_Periods                          | `closedPeriods`                    |
+| System_Access                           | `users` (+ a Firebase Auth account per row) |
 
-Run that import script the same way as the bootstrap script above — once,
-from a trusted machine, using a service account key. This wasn't built
-into the app itself since it's a one-time migration step, not something
-the office needs a UI button for.
+Property_\*, Reconciliation_\*, and Create_InventoryPPE are **not**
+imported — those modules were dropped from this Firebase edition.
+
+Columns this app's UI doesn't have a dedicated field for yet (e.g. a
+Chart of Accounts row's "With Bank Recon", "Cash Flow Classification"; a
+Budget line's "Office/Function Name", "Expense Code") are preserved on
+each document under an `extra` object rather than silently dropped, so
+nothing is lost even though the UI doesn't surface it yet.
+
+```
+cd scripts
+npm install                                       # one-time
+node importFromXlsx.js /path/to/export.xlsx --dry-run
+#   ^ parses everything and prints counts + sample documents —
+#     writes nothing. Always run this first and sanity-check the counts
+#     against what you expect before writing for real.
+
+node importFromXlsx.js /path/to/export.xlsx --service-account /path/to/serviceAccountKey.json
+#   ^ the real import. Prints a temporary password at the end — every
+#     imported System_Access row gets a Firebase Auth account with that
+#     SAME temporary password (the old sheet only stores a password hash
+#     from the Apps Script system, which Firebase Auth can't reuse), and
+#     mustChangePassword is set so each person is forced to set their own
+#     on first login. Issue each person theirs via Settings > System
+#     Access > Reset Password (or share the printed one only over a
+#     secure channel) before telling them to log in.
+```
+
+`serviceAccountKey.json` is git-ignored — never commit it. Delete it (and
+rotate the key in the Firebase console) once you no longer need it on
+that machine. The import is safe to re-run (every write is a merge keyed
+by a stable field — account code, OBR No., etc. — except Transactions and
+`budgetReferenceLog`, which have no natural key in the original sheet and
+so get a fresh document every run; don't re-run against the same project
+once real activity has happened on top of an import, or re-running it
+will duplicate those two).
 
 ## 6. Local development (Firebase Emulator Suite)
 

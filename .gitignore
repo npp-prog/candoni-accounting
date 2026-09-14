@@ -9,3 +9,8 @@ ui-debug.log
 *.local
 public/js/firebase-config.js
 serviceAccountKey.json
+
+# Real financial/personal data exported for scripts/importFromXlsx.js —
+# never belongs in the repo, wherever it's saved.
+*.xlsx
+!scripts/**/*.example.xlsx
