@@ -1,0 +1,63 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fund", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "transactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fund", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jev",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fund", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jevLines",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bankAccount", "order": "ASCENDING" },
+        { "fieldPath": "fund", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jevLines",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "accountCode", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "obligationRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fund", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

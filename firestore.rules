@@ -1,0 +1,117 @@
+rules_version = '2';
+
+/**
+ * Security model: this app's real business logic (role checks, the
+ * monthly-closing lock, balanced-JEV validation, reference-number
+ * generation, audit logging) lives in Cloud Functions, which use the Admin
+ * SDK and therefore bypass these rules entirely. These rules exist to
+ * control what the BROWSER may do directly against Firestore:
+ *   - reads: any signed-in, Active user may read the operational
+ *     collections (scoped by fund access where the document carries a
+ *     fundKey), so the UI can use live onSnapshot listeners instead of
+ *     round-tripping through a callable for every list view.
+ *   - writes: none of the operational collections accept a direct client
+ *     write — every create/update goes through a callable so the rules
+ *     above can't be bypassed by someone editing Firestore from the
+ *     browser console. The `counters` collection (reference-number
+ *     sequences) is fully internal and never touched by any client.
+ */
+function tokenRole() { return request.auth.token.role; }
+function tokenFundAccess() { return request.auth.token.get('fundAccess', []); }
+function isAccountant() { return isSignedIn() && tokenRole() == 'Municipal Accountant'; }
+function isSignedIn() { return request.auth != null; }
+function isActive() { return isSignedIn() && request.auth.token.get('status', 'Active') == 'Active'; }
+
+function hasFundAccess(fundKey) {
+  return isAccountant()
+    || !('fundKey' in resource.data)
+    || tokenFundAccess().size() == 0
+    || tokenFundAccess().hasAny(['all', fundKey]);
+}
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Username -> email lookup, so the login form can accept a
+    // Username the same way the original did (Firebase Auth itself only
+    // knows email addresses). Deliberately public-read (a username isn't
+    // sensitive, and there's no session yet at the point this is read) but
+    // never client-writable — only createUser (Admin SDK) populates it.
+    match /usernameIndex/{username} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ---- Users / System Access ------------------------------------
+    match /users/{uid} {
+      allow get: if isSignedIn() && (request.auth.uid == uid || isAccountant());
+      allow list: if isAccountant();
+      allow write: if false; // createUser/updateUser callables only (Admin SDK)
+    }
+
+    // ---- Chart of Accounts ------------------------------------------
+    match /{coaCollection}/{accountCode} {
+      allow read: if isActive() && coaCollection in ['coa_generalFund', 'coa_sef', 'coa_trustFund'];
+      allow write: if false; // saveAccount/deleteAccount callables only
+    }
+
+    // ---- Transactions -------------------------------------------------
+    match /transactions/{docId} {
+      allow read: if isActive() && hasFundAccess(resource.data.get('fundKey', ''));
+      allow write: if false; // saveTransaction/updateTransaction/updateTransactionStatus only
+    }
+
+    // ---- Journal Entry Vouchers ---------------------------------------
+    match /jev/{docId} {
+      allow read: if isActive() && hasFundAccess(resource.data.get('fundKey', ''));
+      allow write: if false; // saveJEV only
+    }
+    match /jevLines/{docId} {
+      allow read: if isActive() && hasFundAccess(resource.data.get('fundKey', ''));
+      allow write: if false; // written internally by saveJEV only
+    }
+
+    // ---- Budget ---------------------------------------------------------
+    match /budgetLines/{docId} {
+      allow read: if isActive() && hasFundAccess(resource.data.get('fundKey', ''));
+      allow write: if false; // saveBudgetLine only
+    }
+    match /budgetReferenceLog/{docId} {
+      allow read: if isActive();
+      allow write: if false;
+    }
+    match /obligationRequests/{docId} {
+      allow read: if isActive() && hasFundAccess(resource.data.get('fundKey', ''));
+      allow write: if false; // saveObligationRequest(Batch) only
+    }
+
+    // ---- Create / master data --------------------------------------
+    match /{createCollection}/{docId} {
+      allow read: if isActive() && createCollection in
+        ['createNames', 'createBankAccount', 'createOffice', 'createFpp', 'createSubsidiaryLedgerAccounts'];
+      allow write: if false; // saveCreateRecord/deleteCreateRecord only
+    }
+
+    // ---- Closing ------------------------------------------------------
+    match /closedPeriods/{docId} {
+      allow read: if isActive();
+      allow write: if false; // closeMonth/reopenMonth only
+    }
+
+    // ---- Audit Log ------------------------------------------------------
+    match /auditLog/{docId} {
+      allow read: if isAccountant();
+      allow write: if false; // written internally by every callable via logAudit()
+    }
+
+    // ---- Internal reference-number counters ----------------------------
+    match /counters/{docId} {
+      allow read, write: if false; // Admin SDK (allocateRefNo) only
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
