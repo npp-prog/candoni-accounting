@@ -21,9 +21,6 @@ export const TX_TYPES = [
   ['ada', 'ADA'],
   ['collections_deposit', 'Collections and Deposit'],
   ['liquidation', 'Liquidation'],
-  ['payroll', 'Payroll'],
-  ['rsmi', 'RSMI'],
-  ['depreciation', 'Depreciation'],
   ['others', 'Others']
 ];
 export const TX_TYPE_LABEL = Object.fromEntries(TX_TYPES);
