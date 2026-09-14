@@ -8,6 +8,7 @@ import { initAuth, onAuthReady } from './auth.js';
 import { initNav, goToPage } from './nav.js';
 import { onUserChange } from './state.js';
 import { initTransactionsPage } from './pages/transactions.js';
+import { initBankReconPage } from './pages/bankrecon.js';
 import { initBudgetPage } from './pages/budget.js';
 import { initReportPage } from './pages/report.js';
 import { initCreatePage } from './pages/create.js';
@@ -26,6 +27,7 @@ function updateUserChip(user) {
 document.addEventListener('DOMContentLoaded', () => {
   initNav();
   initTransactionsPage();
+  initBankReconPage();
   initBudgetPage();
   initReportPage();
   initCreatePage();
